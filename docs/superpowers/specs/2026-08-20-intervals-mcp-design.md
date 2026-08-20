@@ -23,6 +23,33 @@ pi's `ExtensionAPI`. Any MCP host — Claude Code, pi, Claude Desktop, Cursor �
 - **The fate of `pi-intervals` is out of scope.** Whether pi registers this MCP server or
   keeps its extension is that repo's decision. Nothing here depends on it.
 
+## Source material
+
+The domain layer and its tests are ported from the working `pi-intervals` extension at:
+
+    /home/roche/projects/pi/extensions/pi-intervals
+
+Treat it as **read-only reference**. It is a live tool in daily use, and nothing in this
+design changes it.
+
+- Its `src/` holds 26 files. 21 are the pi-free domain layer listed under Architecture.
+  `index.ts`, `tools.ts`, and `commands.ts` are the pi adapters being replaced;
+  `quiet-tool-rendering.ts` is dropped.
+- Its `tests/` holds 24 files; the 22 that are not `tools.test.ts` or `commands.test.ts`
+  move across.
+- Its `README.md` documents the tool and command behaviour this server must preserve.
+- `docs/designs/2026-04-24-pi-intervals.md` records the original local-first data model.
+
+## Conventions carried over
+
+- ESM (`"type": "module"`), TypeScript `strict`, `module` and `moduleResolution` both
+  `NodeNext`, target ES2022 — so relative imports carry the `.js` extension.
+- Node engine `>= 22.5.0`, required for `node:sqlite`.
+- `test`: `tsx --test tests/**/*.test.ts`. `typecheck`: `tsc --noEmit`. `check` runs both
+  plus the gates described under Testing.
+- Indentation is 2 spaces. (`pi-intervals/src/tools.ts` uses tabs; that outlier is not
+  carried over.)
+
 ## Decisions
 
 | Decision | Choice | Why |
@@ -253,3 +280,11 @@ Each has a decided fallback, so none blocks progress:
 5. CLI, including `setup` and home resolution.
 6. Plugin scaffolding, the rewritten skill, and the slash commands.
 7. `npm run check` gates: pi-ism grep, `console.*` grep, `dist/` freshness.
+
+## Next step
+
+No implementation plan exists yet. The next action is to write one from this spec into
+`docs/superpowers/plans/YYYY-MM-DD-intervals-mcp.md`, following the Order of work above.
+
+This repo currently contains nothing but this spec — no `package.json`, no `src/`, no git
+remote.
