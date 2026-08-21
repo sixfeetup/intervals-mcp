@@ -23619,6 +23619,9 @@ __export(value_exports, {
   Repair: () => Repair
 });
 
+// src/domain/runtime.ts
+import { randomUUID } from "node:crypto";
+
 // src/domain/background-sync.ts
 function startBackgroundSync(options) {
   let stopped = false;
@@ -24036,6 +24039,7 @@ function openDatabase(path) {
   mkdirSync2(dirname(path), { recursive: true });
   const db = new DbCompat(path);
   db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA foreign_keys = ON");
   migrate(db);
   return db;
@@ -24132,7 +24136,14 @@ function migrate(db) {
     create index if not exists idx_time_entries_date on time_entries(date);
     create index if not exists idx_time_entries_project on time_entries(project_id);
     create index if not exists idx_time_entries_sync on time_entries(sync_status);
+
+    create table if not exists sync_lease (
+      id integer primary key check (id = 1),
+      owner text,
+      expires_at integer not null default 0
+    );
   `);
+  db.exec("insert or ignore into sync_lease (id, owner, expires_at) values (1, null, 0)");
 }
 
 // src/domain/intervals-api.ts
@@ -24234,6 +24245,24 @@ var ProjectDefaultsStore = class {
   }
 };
 
+// src/domain/sync-lease.ts
+var SYNC_LEASE_TTL_MS = 6e4;
+function claimSyncLease(db, owner, nowMs, ttlMs = SYNC_LEASE_TTL_MS) {
+  const result = db.prepare("update sync_lease set owner = ?, expires_at = ? where id = 1 and (expires_at < ? or owner = ?)").run(owner, nowMs + ttlMs, nowMs, owner);
+  return result.changes === 1;
+}
+function releaseSyncLease(db, owner) {
+  db.prepare("update sync_lease set expires_at = 0 where id = 1 and owner = ?").run(owner);
+}
+async function withSyncLease(db, owner, fn, nowMs = Date.now) {
+  if (!claimSyncLease(db, owner, nowMs())) return void 0;
+  try {
+    return await fn();
+  } finally {
+    releaseSyncLease(db, owner);
+  }
+}
+
 // src/domain/duration-rounding.ts
 var ROUNDING_SECONDS = 360;
 function roundDurationSecondsForIntervals(durationSeconds) {
@@ -24243,12 +24272,13 @@ function roundDurationSecondsForIntervals(durationSeconds) {
 
 // src/domain/sync-service.ts
 async function syncPending(options) {
-  const { timeRepo, api, personId, limit = 20, catalog } = options;
+  const { timeRepo, api, personId, limit = 20, catalog, renewLease } = options;
   const entries = timeRepo.pendingForSync(limit);
   let timeEntriesCreated = 0;
   let timeEntriesUpdated = 0;
   let failed = 0;
   for (const entry of entries) {
+    renewLease?.();
     if (personId == null) {
       timeRepo.markSyncFailed(entry.localId, "Missing personId: set INTERVALS_PERSON_ID or run `intervals setup` to configure your Intervals person ID.");
       failed++;
@@ -25194,6 +25224,7 @@ function createRuntime(options = {}) {
   let credentials = resolveCredentials(config2, env);
   let personId = resolvePersonId(config2, env);
   const db = openDatabase(databasePath(home));
+  const syncOwner = `${process.pid}:${randomUUID()}`;
   const catalogStore = new CatalogStore(db);
   const defaultsStore = new ProjectDefaultsStore(db);
   const timerStore = new TimerStore(db);
@@ -25213,13 +25244,21 @@ function createRuntime(options = {}) {
     if (!apiClient || !personId) {
       return { timeEntriesCreated: 0, timeEntriesUpdated: 0, failed: 0 };
     }
-    return syncPending({
-      timeRepo: timeEntryStore,
-      api: apiClient,
-      personId,
-      limit: 50,
-      catalog: catalogStore
-    });
+    const result = await withSyncLease(
+      db,
+      syncOwner,
+      () => syncPending({
+        timeRepo: timeEntryStore,
+        api: apiClient,
+        personId,
+        limit: 50,
+        catalog: catalogStore,
+        renewLease: () => {
+          claimSyncLease(db, syncOwner, Date.now());
+        }
+      })
+    );
+    return result ?? { timeEntriesCreated: 0, timeEntriesUpdated: 0, failed: 0 };
   }
   async function deleteTimeEntry(localId) {
     const entry = timeEntryStore.getTimeEntry(localId);
@@ -25276,6 +25315,7 @@ function createRuntime(options = {}) {
   function close() {
     stopBackgroundSync();
     if (db.open) {
+      releaseSyncLease(db, syncOwner);
       db.close();
     }
   }

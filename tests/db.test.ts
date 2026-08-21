@@ -65,3 +65,15 @@ test("time_entries schema: retains sync metadata and source_timer_id", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("openDatabase sets busy_timeout to 5000", () => {
+  const dir = mkdtempSync(join(tmpdir(), "intervals-db-pragma-"));
+  try {
+    const db = openDatabase(join(dir, "t.db"));
+    const row = db.prepare("PRAGMA busy_timeout").get<{ timeout: number }>();
+    assert.equal(row?.timeout, 5000);
+    db.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

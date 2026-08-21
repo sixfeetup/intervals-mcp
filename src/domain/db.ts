@@ -131,6 +131,7 @@ export function openDatabase(path: string): Db {
   mkdirSync(dirname(path), { recursive: true });
   const db = new DbCompat(path);
   db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA foreign_keys = ON");
   migrate(db);
   return db;
@@ -228,5 +229,12 @@ export function migrate(db: Db): void {
     create index if not exists idx_time_entries_date on time_entries(date);
     create index if not exists idx_time_entries_project on time_entries(project_id);
     create index if not exists idx_time_entries_sync on time_entries(sync_status);
+
+    create table if not exists sync_lease (
+      id integer primary key check (id = 1),
+      owner text,
+      expires_at integer not null default 0
+    );
   `);
+  db.exec("insert or ignore into sync_lease (id, owner, expires_at) values (1, null, 0)");
 }

@@ -619,3 +619,38 @@ test("syncPending redacts Basic tokens in sync errors", async () => {
     teardown(dir);
   }
 });
+
+test("syncPending calls renewLease before each entry", async () => {
+  const { dir, db, timeRepo } = setup();
+  try {
+    for (const localId of ["entry-renew-1", "entry-renew-2"]) {
+      timeRepo.insertTimeEntry({
+        localId,
+        projectId: 10,
+        worktypeId: 5,
+        date: "2026-04-24",
+        durationSeconds: 3600,
+        description: "Dev work",
+        billable: true,
+        syncStatus: "pending",
+        createdAt: "2026-04-24T10:00:00Z",
+        updatedAt: "2026-04-24T10:00:00Z",
+      });
+    }
+    const { api } = makeApi({ createResult: { id: 99 } });
+    let renewals = 0;
+    const result = await syncPending({
+      timeRepo,
+      api,
+      personId: 42,
+      renewLease: () => {
+        renewals += 1;
+      },
+    });
+    assert.equal(renewals, 2);
+    assert.equal(result.timeEntriesCreated, 2);
+    db.close();
+  } finally {
+    teardown(dir);
+  }
+});

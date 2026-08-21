@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { startBackgroundSync, type BackgroundSyncHandle } from "./background-sync.js";
 import { CatalogStore } from "./catalog-store.js";
 import {
@@ -11,6 +12,7 @@ import { syncProjectsCatalog } from "./catalog-sync.js";
 import { openDatabase, type Db } from "./db.js";
 import { IntervalsApiClient } from "./intervals-api.js";
 import { ProjectDefaultsStore } from "./project-defaults-store.js";
+import { claimSyncLease, releaseSyncLease, withSyncLease } from "./sync-lease.js";
 import { syncPending } from "./sync-service.js";
 import { TimeEntryStore, type TimeEntry } from "./time-entry-store.js";
 import { TimeService } from "./time-service.js";
@@ -58,6 +60,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   let personId = resolvePersonId(config, env);
 
   const db = openDatabase(databasePath(home));
+  const syncOwner = `${process.pid}:${randomUUID()}`;
   const catalogStore = new CatalogStore(db);
   const defaultsStore = new ProjectDefaultsStore(db);
   const timerStore = new TimerStore(db);
@@ -83,13 +86,20 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     if (!apiClient || !personId) {
       return { timeEntriesCreated: 0, timeEntriesUpdated: 0, failed: 0 };
     }
-    return syncPending({
-      timeRepo: timeEntryStore,
-      api: apiClient,
-      personId,
-      limit: 50,
-      catalog: catalogStore,
-    });
+    const result = await withSyncLease(db, syncOwner, () =>
+      syncPending({
+        timeRepo: timeEntryStore,
+        api: apiClient!,
+        personId: personId!,
+        limit: 50,
+        catalog: catalogStore,
+        renewLease: () => {
+          claimSyncLease(db, syncOwner, Date.now());
+        },
+      }),
+    );
+    // Lease held by another process: skip cheaply; pending rows sync on a later pass.
+    return result ?? { timeEntriesCreated: 0, timeEntriesUpdated: 0, failed: 0 };
   }
 
   async function deleteTimeEntry(localId: string): Promise<TimeEntry> {
@@ -157,6 +167,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   function close(): void {
     stopBackgroundSync();
     if (db.open) {
+      releaseSyncLease(db, syncOwner);
       db.close();
     }
   }
