@@ -1,0 +1,13 @@
+{
+  "name": "intervals-mcp",
+  "owner": {
+    "name": "Six Feet Up"
+  },
+  "plugins": [
+    {
+      "name": "intervals",
+      "source": "./",
+      "description": "Local-first Intervals time tracking: 14 MCP tools, a zero-dependency CLI, and slash commands."
+    }
+  ]
+}

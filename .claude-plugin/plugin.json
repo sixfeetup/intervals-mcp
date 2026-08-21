@@ -1,0 +1,5 @@
+{
+  "name": "intervals",
+  "version": "0.1.0",
+  "description": "Local-first Intervals time tracking: 14 MCP tools, a zero-dependency CLI, and slash commands."
+}
