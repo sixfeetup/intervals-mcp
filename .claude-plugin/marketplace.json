@@ -1,5 +1,6 @@
 {
   "name": "intervals-mcp",
+  "description": "Marketplace for the intervals plugin: local-first Intervals time tracking.",
   "owner": {
     "name": "Six Feet Up"
   },

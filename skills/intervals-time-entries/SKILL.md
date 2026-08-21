@@ -24,10 +24,10 @@ Use this skill for any request involving Intervals time tracking, including:
 
 Always gather context before creating, editing, or syncing a time entry or timer:
 
-1. Check recent time entries with `mcp__intervals__list_time`.
-2. Check active/recent timers with `mcp__intervals__list_timers` when the request involves timers or could be affected by an active timer. Before starting a new timer, if any active timer exists, ask whether it should be stopped first.
-3. Use `mcp__intervals__query_time` for date-scoped requests such as “today”, “yesterday”, “this week”, or when recent entries are not enough.
-4. Use `mcp__intervals__find_project_context` to resolve project names, ticket prefixes, worktypes, modules, and ambiguous project matches.
+1. Check recent time entries with `mcp__plugin_intervals_intervals__list_time`.
+2. Check active/recent timers with `mcp__plugin_intervals_intervals__list_timers` when the request involves timers or could be affected by an active timer. Before starting a new timer, if any active timer exists, ask whether it should be stopped first.
+3. Use `mcp__plugin_intervals_intervals__query_time` for date-scoped requests such as “today”, “yesterday”, “this week”, or when recent entries are not enough.
+4. Use `mcp__plugin_intervals_intervals__find_project_context` to resolve project names, ticket prefixes, worktypes, modules, and ambiguous project matches.
 5. Use the current working directory and path as an additional clue. For example, if the user is working under a client/project repo, prefer recent entries and project matches related to that repo.
 
 Do not skip the recent-entry check just because the user supplied a ticket key or project name.
@@ -45,7 +45,7 @@ When work is beginning but the user did not explicitly ask to start a timer:
 
 Before starting any timer after explicit user request or confirmation:
 
-1. Check active timers first with `mcp__intervals__list_timers`.
+1. Check active timers first with `mcp__plugin_intervals_intervals__list_timers`.
 2. If any active timer is running, ask whether to stop it before starting the new timer. Name the active timer(s) and keep the question concise.
 3. Do not start the new timer until the user answers, unless the user already explicitly said to keep existing timers running or to allow multiple active timers.
 4. If the user says to stop an active timer, stop it with the best available classification, then start the requested new timer.
@@ -108,31 +108,31 @@ A “new project” means there is no sufficiently similar recent time entry/tim
 When starting a timer for a new project after the user explicitly requested or confirmed the timer:
 
 1. Do not block timer start solely because defaults are unknown.
-2. Resolve project/worktype/module as far as possible from `mcp__intervals__find_project_context` and path clues.
+2. Resolve project/worktype/module as far as possible from `mcp__plugin_intervals_intervals__find_project_context` and path clues.
 3. Ask the user whether they want to set default worktype and module for that project, especially if they had to choose them manually.
-4. If the user confirms, call `mcp__intervals__set_project_defaults` with the confirmed worktype/module.
+4. If the user confirms, call `mcp__plugin_intervals_intervals__set_project_defaults` with the confirmed worktype/module.
 
 For retroactive entries, resolve required project/worktype before creating the entry. If worktype/module cannot be inferred safely, ask before adding the entry.
 
 ## Tool Guidelines
 
-- Use `mcp__intervals__start_timer` only when the user explicitly requested a timer or answered yes when asked whether to start one. First check active timers and ask whether any running timer should be stopped. Include project/worktype/module hints when confidently inferred from recent history.
-- Use `mcp__intervals__stop_timer` when the user finishes work. Re-check recent entries if classification is missing or stale. NB: Do not modify the timer project, worktype or module if it already set.
-- Use `mcp__intervals__add_time` for retroactive entries. Convert durations to minutes.
-- Use `mcp__intervals__edit_time` to fix failed or incorrect entries, then verify with `mcp__intervals__list_time` or `mcp__intervals__query_time`.
-- Use `mcp__intervals__delete_time` when the user wants to remove a time entry. If the user references a stopped timer, pass `timer_id` so the linked time entry is deleted.
-- Use `mcp__intervals__sync_now` after adding/editing/stopping if the tool did not already sync, or when the user explicitly asks to retry sync.
-- Use `mcp__intervals__find_project_context` before relying on a project/worktype/module ID that came from text rather than a previous time entry.
-- Do not read `~/.intervals/intervals.db` directly for normal workflows. Use `mcp__intervals__list_time`, `mcp__intervals__query_time`, and `mcp__intervals__lookup_time_entry`; these expose local time entry IDs, local start/end windows, sync status, and timer-to-entry mapping without direct DB access.
+- Use `mcp__plugin_intervals_intervals__start_timer` only when the user explicitly requested a timer or answered yes when asked whether to start one. First check active timers and ask whether any running timer should be stopped. Include project/worktype/module hints when confidently inferred from recent history.
+- Use `mcp__plugin_intervals_intervals__stop_timer` when the user finishes work. Re-check recent entries if classification is missing or stale. NB: Do not modify the timer project, worktype or module if it already set.
+- Use `mcp__plugin_intervals_intervals__add_time` for retroactive entries. Convert durations to minutes.
+- Use `mcp__plugin_intervals_intervals__edit_time` to fix failed or incorrect entries, then verify with `mcp__plugin_intervals_intervals__list_time` or `mcp__plugin_intervals_intervals__query_time`.
+- Use `mcp__plugin_intervals_intervals__delete_time` when the user wants to remove a time entry. If the user references a stopped timer, pass `timer_id` so the linked time entry is deleted.
+- Use `mcp__plugin_intervals_intervals__sync_now` after adding/editing/stopping if the tool did not already sync, or when the user explicitly asks to retry sync.
+- Use `mcp__plugin_intervals_intervals__find_project_context` before relying on a project/worktype/module ID that came from text rather than a previous time entry.
+- Do not read `~/.intervals/intervals.db` directly for normal workflows. Use `mcp__plugin_intervals_intervals__list_time`, `mcp__plugin_intervals_intervals__query_time`, and `mcp__plugin_intervals_intervals__lookup_time_entry`; these expose local time entry IDs, local start/end windows, sync status, and timer-to-entry mapping without direct DB access.
 - When the user asks to change an entry's stop/end time using a bare time like `08:35`, use `stop_time` instead of raw `end_at`. `stop_time` is interpreted as local time and recalculates duration from the entry's stored start time.
-- If the user gives a stopped timer ID when editing a derived time entry, use `mcp__intervals__lookup_time_entry(timer_id=...)` or `mcp__intervals__edit_time(timer_id=...)`; do not map the timer to a time entry through SQLite.
+- If the user gives a stopped timer ID when editing a derived time entry, use `mcp__plugin_intervals_intervals__lookup_time_entry(timer_id=...)` or `mcp__plugin_intervals_intervals__edit_time(timer_id=...)`; do not map the timer to a time entry through SQLite.
 
 ## ID Safety
 
 Be careful with local catalog row IDs versus Intervals remote IDs.
 
-- Prefer IDs returned directly by `mcp__intervals__find_project_context` and IDs shown in synced/recent time-entry tool output.
-- If sync fails with an “Invalid worktype_id” or “local catalog row id” error, correct the entry using the Intervals worktype/module IDs suggested by the error or by `mcp__intervals__find_project_context`, then retry sync.
+- Prefer IDs returned directly by `mcp__plugin_intervals_intervals__find_project_context` and IDs shown in synced/recent time-entry tool output.
+- If sync fails with an “Invalid worktype_id” or “local catalog row id” error, correct the entry using the Intervals worktype/module IDs suggested by the error or by `mcp__plugin_intervals_intervals__find_project_context`, then retry sync.
 - Do not reuse raw database IDs unless the tools identify them as valid Intervals IDs.
 
 ## Response Pattern

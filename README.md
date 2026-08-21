@@ -82,26 +82,26 @@ Run `node dist/cli.mjs help` (or `intervals help`) for the full usage text.
 
 ## Agent tools
 
-When installed as a Claude Code plugin, tools surface with the `mcp__intervals__` prefix:
+When installed as a Claude Code plugin, tools surface with the `mcp__plugin_intervals_intervals__` prefix:
 
 | Tool | Description |
 | --- | --- |
-| `mcp__intervals__find_project_context` | Search the local project catalog for IDs and classifications (local-only) |
-| `mcp__intervals__start_timer` | Start a local timer with a simple description and optional `start_at`; project/worktype/module are optional |
-| `mcp__intervals__stop_timer` | Stop a timer, resolve classification, create a pending time entry, and sync |
-| `mcp__intervals__edit_timer` | Update description or project/worktype/module hints on a running local timer |
-| `mcp__intervals__delete_timer` | Safely delete an active timer or stopped timer with no linked time entry |
-| `mcp__intervals__add_time` | Add a completed time entry directly (duration in minutes) |
-| `mcp__intervals__edit_time` | Edit an existing local time entry by short ID or linked timer ID; use `stop_time` for local stop-time changes that recalculate duration |
-| `mcp__intervals__delete_time` | Delete a local or synced time entry by short ID or linked timer ID |
-| `mcp__intervals__query_time` | Report time entries by date range and project filter (local-only) |
-| `mcp__intervals__list_timers` | List active or recent local timers |
-| `mcp__intervals__lookup_time_entry` | Map a stopped local timer ID to the linked local time entry ID |
-| `mcp__intervals__list_time` | List recent local time entries with sync status |
-| `mcp__intervals__set_project_defaults` | Configure default worktype/module for a project |
-| `mcp__intervals__sync_now` | Immediately retry syncing pending time entries to Intervals |
+| `mcp__plugin_intervals_intervals__find_project_context` | Search the local project catalog for IDs and classifications (local-only) |
+| `mcp__plugin_intervals_intervals__start_timer` | Start a local timer with a simple description and optional `start_at`; project/worktype/module are optional |
+| `mcp__plugin_intervals_intervals__stop_timer` | Stop a timer, resolve classification, create a pending time entry, and sync |
+| `mcp__plugin_intervals_intervals__edit_timer` | Update description or project/worktype/module hints on a running local timer |
+| `mcp__plugin_intervals_intervals__delete_timer` | Safely delete an active timer or stopped timer with no linked time entry |
+| `mcp__plugin_intervals_intervals__add_time` | Add a completed time entry directly (duration in minutes) |
+| `mcp__plugin_intervals_intervals__edit_time` | Edit an existing local time entry by short ID or linked timer ID; use `stop_time` for local stop-time changes that recalculate duration |
+| `mcp__plugin_intervals_intervals__delete_time` | Delete a local or synced time entry by short ID or linked timer ID |
+| `mcp__plugin_intervals_intervals__query_time` | Report time entries by date range and project filter (local-only) |
+| `mcp__plugin_intervals_intervals__list_timers` | List active or recent local timers |
+| `mcp__plugin_intervals_intervals__lookup_time_entry` | Map a stopped local timer ID to the linked local time entry ID |
+| `mcp__plugin_intervals_intervals__list_time` | List recent local time entries with sync status |
+| `mcp__plugin_intervals_intervals__set_project_defaults` | Configure default worktype/module for a project |
+| `mcp__plugin_intervals_intervals__sync_now` | Immediately retry syncing pending time entries to Intervals |
 
-`mcp__intervals__start_timer` accepts optional `start_at` values for retroactive
+`mcp__plugin_intervals_intervals__start_timer` accepts optional `start_at` values for retroactive
 local timer starts. Use `HH:mm` or `H:mm` for today in local time,
 `YYYY-MM-DD HH:mm` for a local date/time, or an ISO datetime with an explicit
 offset/timezone. Future `start_at` values are rejected.
@@ -128,14 +128,14 @@ offset/timezone. Future `start_at` values are rejected.
 - **Stop/apply creates a time entry.** When you stop a timer, you provide (or
   resolve) the project and worktype. The server creates a pending time entry
   and immediately tries to sync it to Intervals.
-- **Time entries are local-first.** `mcp__intervals__add_time`,
-  `mcp__intervals__edit_time`, and `mcp__intervals__stop_timer` all persist to
+- **Time entries are local-first.** `mcp__plugin_intervals_intervals__add_time`,
+  `mcp__plugin_intervals_intervals__edit_time`, and `mcp__plugin_intervals_intervals__stop_timer` all persist to
   SQLite before any network call. If sync fails, the entry stays local with a
   `failed` or `pending` status and can be retried.
 - **Catalog sync stores active rows.** Project sync fetches all catalog pages,
   keeps active projects and active classifications, and retains clients
   referenced by active projects.
-- **Reports are local-only.** `query_time` and `/intervals-time` read from
+- **Reports are local-only.** `mcp__plugin_intervals_intervals__query_time` and `/intervals-time` read from
   SQLite and never call the Intervals API.
 
 ## Developer note
