@@ -27,7 +27,7 @@ Every task's requirements implicitly include these (all from the spec):
 - Storage: `INTERVALS_HOME` env var if set, else `~/.intervals/`. Credential precedence: `INTERVALS_API_KEY` / `INTERVALS_BASE_URL` / `INTERVALS_PERSON_ID` env vars first, then `config.json` (mode 0600).
 - Naming: npm package `intervals-mcp`; Claude Code plugin `intervals`; MCP server key `intervals`; tool names **without** the `intervals_` prefix (14 tools: `find_project_context`, `start_timer`, `stop_timer`, `edit_timer`, `delete_timer`, `add_time`, `edit_time`, `delete_time`, `query_time`, `list_timers`, `lookup_time_entry`, `list_time`, `set_project_defaults`, `sync_now`).
 - `dist/` is **committed** and must be rebuilt in the same commit as any `src/` change from Task 5 onward (the Task 9 freshness gate enforces this).
-- No pi coupling: `npm run check` (Task 9) greps `src/` for `PI_INTERVALS_HOME`, `.pi/`, `/intervals-`, and `@mariozechner` — user-facing strings must say `intervals setup`, never `/intervals-setup`.
+- No pi coupling: `npm run check` (Task 9) greps `src/` for `PI_INTERVALS_HOME`, `.pi/`, `/intervals-`, and `@mariozechner` — user-facing strings must say `intervals setup`, never `/intervals-setup`. (The `/intervals-` gate excludes the legitimate `intervals-api` module name, which `src/domain/runtime.ts` imports.)
 - Every commit leaves `npm run typecheck` and `npm test` green.
 
 ## Findings from planning (spec amended 2026-08-21 to incorporate all of these)
@@ -41,6 +41,8 @@ and they explain choices an implementer might otherwise second-guess.
 3. **Lease semantics.** The spec's original "TTL is 60s, renewed on each tick, released on shutdown" could not mean a long-held process lease: the default tick is 10 minutes, which cannot sustain a 60s TTL, and it would block another session's manual `sync_now` for minutes. The pinned-down semantics (now in the spec): **claim per sync pass, release in a `finally` after the pass**, plus an owner-guarded release on shutdown as a backstop. The claim SQL's `OR owner = ?` clause is the renewal path (a holder re-claims its own lease). Expiry (60s) covers crashed holders mid-pass.
 4. **`command-args.ts` is dropped, not moved.** `splitCommandArgs` existed only because pi handed commands a single raw string. The CLI receives `process.argv`, already tokenized by the shell, so the file would be dead code with no test (there is no `command-args.test.ts`; it was covered via `commands.test.ts`). Nothing imports it after the port.
 5. **Two install-time behaviors need verification at Task 8** (now spec assumptions 4 and 5, fallbacks decided): (a) plugin-provided MCP tools surface as `mcp__intervals__<tool>` — verify at install; if the plugin name is prefixed differently, update the skill's tool names to match reality. (b) `` !`command` `` injection and `$ARGUMENTS` work inside plugin `skills/*/SKILL.md` — if not, move the seven slash commands to `commands/*.md` files (classic command files support both).
+6. **Intentional CLI drifts from `commands.ts`** — do not "fix" these back during the port: errors print as the bare domain message via `runCli`'s single top-level catch (the source's `Timer edit failed:` / `Timer delete failed:` / `Edit failed:` / `Query failed:` prefixes are dropped); an unknown `timers` subcommand is a usage error (exit 2) where the source silently listed active timers; and the timers-edit usage line documents `description=`, which the source supported but left undocumented.
+7. **Post-plan review fixes (2026-08-21, adversarial review):** the pi-ism gate's `/intervals-` pattern excludes the `intervals-api` module name (the domain layer legitimately imports `./intervals-api.js`, so the naive pattern could never pass); `syncPending` gains an optional `renewLease` hook called before each entry, so a sync pass slower than the 60s TTL keeps the lease instead of losing it mid-pass; the MCP server also shuts down on stdin EOF (the SDK's stdio transport does not watch for it, and a stranded process would keep ticking background sync); and the CLI executable is the shebanged `dist/cli.mjs` itself rather than a `bin/intervals` shim — an extensionless Node file is ambiguous under `"type": "module"` (ESM scope without `require` on current Node, `ERR_UNKNOWN_FILE_EXTENSION` on 22.5–22.6). `runtime.syncService` stays despite being unused by the adapters: `runtime.test.ts:80` asserts it exists, and the moved tests are the port's regression net.
 
 ## File structure (final)
 
@@ -55,8 +57,7 @@ intervals-mcp/
 ├── README.md                     # Task 8
 ├── package.json                  # Task 1
 ├── tsconfig.json                 # Task 1
-├── bin/intervals                 # Task 7 (CLI shim)
-├── dist/                         # Task 5, 7 (committed bundles)
+├── dist/                         # Task 5, 7 (committed bundles; cli.mjs shebanged + executable, the package bin)
 │   ├── server.mjs
 │   └── cli.mjs
 ├── scripts/
@@ -275,7 +276,9 @@ Not copied: `tools.test.ts`, `commands.test.ts` (rewritten in Tasks 4/7), `smoke
 ```bash
 sed -i 's|"\.\./src/|"../src/domain/|g' tests/*.test.ts
 sed -i 's/PI_INTERVALS_HOME/INTERVALS_HOME/g' tests/config.test.ts tests/runtime.test.ts
-grep -rn "PI_INTERVALS_HOME\|\.\./src/[a-z]" tests/ ; echo "grep exit: $?"   # expected: no matches, grep exit: 1
+grep -rn 'PI_INTERVALS_HOME\|\.\./src/[a-z-]*\.js' tests/ ; echo "grep exit: $?"   # expected: no matches, grep exit: 1
+# (The [a-z-]*\.js form cannot cross the /domain/ segment, so it flags only imports the
+# sed missed — a bare "../src/[a-z]" pattern would match every correctly rewritten import.)
 ```
 
 (The spec's "~14 call sites" is 2 in `config.test.ts` + 12 in `runtime.test.ts` — the sed covers all of them, including the test title string "getIntervalsHome uses INTERVALS_HOME when present".)
@@ -381,14 +384,14 @@ test("bright option emits ANSI escape codes", () => {
 npx tsx --test tests/format.test.ts
 ```
 
-Expected: FAIL — compile errors on the removed `formatBright*` imports / missing third parameter, and the new ANSI tests fail against the current `formatTimeReport`.
+Expected: FAIL — the two new ANSI tests fail (the current `formatTimeReport` still emits ANSI, and the `bright` option is not honored yet). `tsx` type-strips without typechecking, so no compile errors appear here; the type-level proof lands at `npm run typecheck` in Step 4.
 
 - [ ] **Step 3: Reshape `src/domain/format.ts`**
 
 Mechanical changes (all row-building logic, widths, grouping, and text stay byte-identical):
 
 1. Export the timer type: `type DisplayTimer = ...` → `export type DisplayTimer = ...`.
-2. Delete the four `formatBright*` exports.
+2. Delete the three `formatBright*` exports (`formatBrightTimer`, `formatBrightTimerRows`, `formatBrightTimerRowsByDate`).
 3. Change the plain entry points to thread a `bright` flag into the existing internals:
 
 ```ts
@@ -509,7 +512,7 @@ export function withLinkedTimeEntryDuration(timeEntryStore: TimeEntryStore, time
 
 - [ ] **Step 2: Write the failing rewritten `tests/tools.test.ts`**
 
-The old file's fake-pi harness (`fakePi`, `renderToolResultText`, `renderToolCallText`, `fakeTheme`) is deleted. Port `fakeRuntime()` **verbatim** from `$SRC/tests/tools.test.ts:31-95` (the object literal with `calls` counters and canned returns for `timerService`, `timeService`, `timeEntryStore`, `catalogStore`, `defaultsStore`, `trySyncNow`, `deleteTimeEntry`), returning `{ runtime: runtime as unknown as Runtime, calls }`. Then:
+The old file's fake-pi harness (`fakePi`, `renderToolResultText`, `renderToolCallText`, `fakeTheme`) is deleted. Port `fakeRuntime()` **verbatim** from `$SRC/tests/tools.test.ts:31-112` (the object literal with `calls` counters and canned returns for `timerService`, `timeService`, `timeEntryStore`, `catalogStore`, `defaultsStore`, `trySyncNow`, `deleteTimeEntry`), returning `{ runtime: runtime as unknown as Runtime, calls }`. Then:
 
 ```ts
 import assert from "node:assert/strict";
@@ -815,8 +818,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
   const params = request.params.arguments ?? {};
   if (!Value.Check(descriptor.inputSchema, params)) {
-    const [first] = [...Value.Errors(descriptor.inputSchema, params)];
-    const detail = first ? `${first.path} ${first.message}` : "arguments do not match the schema";
+    // Value.Errors returns an array; its members carry instancePath/schemaPath/message
+    // (there is no `path` property in typebox 1.x).
+    const [first] = Value.Errors(descriptor.inputSchema, params);
+    const detail = first ? `${first.instancePath} ${first.message}` : "arguments do not match the schema";
     return errorResult(`invalid arguments for ${descriptor.name}: ${detail}`);
   }
   try {
@@ -849,6 +854,9 @@ async function shutdown(): Promise<void> {
 
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
+// The SDK's stdio transport does not watch for stdin EOF; without this, a host that
+// closes stdin without signaling strands the process (and its background-sync interval).
+process.stdin.on("end", () => void shutdown());
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
@@ -874,7 +882,9 @@ npx esbuild src/mcp/server.ts --bundle --platform=node --format=esm --target=nod
   --external:bun:sqlite --outfile="$outdir/server.mjs" --log-level=warning
 if [ -f src/cli/main.ts ]; then
   npx esbuild src/cli/main.ts --bundle --platform=node --format=esm --target=node22 \
+    --banner:js='#!/usr/bin/env node' \
     --external:bun:sqlite --outfile="$outdir/cli.mjs" --log-level=warning
+  chmod +x "$outdir/cli.mjs"
 fi
 ```
 
@@ -1067,7 +1077,7 @@ Several per-session processes share one SQLite file. Three changes: the pragma, 
 
 **Files:**
 - Create: `src/domain/sync-lease.ts`, `tests/sync-lease.test.ts`
-- Modify: `src/domain/db.ts` (pragma + migration), `src/domain/runtime.ts` (wiring), `tests/db.test.ts` (pragma assertion), `dist/server.mjs` (rebuild)
+- Modify: `src/domain/db.ts` (pragma + migration), `src/domain/sync-service.ts` (renewLease hook), `src/domain/runtime.ts` (wiring), `tests/db.test.ts` (pragma assertion), `tests/sync-service.test.ts` (renewal test), `dist/server.mjs` (rebuild)
 
 **Interfaces:**
 - Consumes: `Db` (Task 2).
@@ -1080,6 +1090,10 @@ export function claimSyncLease(db: Db, owner: string, nowMs: number, ttlMs?: num
 export function releaseSyncLease(db: Db, owner: string): void;
 export function withSyncLease<T>(db: Db, owner: string, fn: () => Promise<T>, nowMs?: () => number): Promise<T | undefined>;
 // withSyncLease returns undefined when the lease is held by another live owner (the caller skipped).
+
+// src/domain/sync-service.ts — SyncPendingOptions gains one optional field:
+//   renewLease?(): void   — called before each entry, so a pass slower than the
+//   60s TTL keeps renewing the lease instead of losing it mid-pass.
 ```
 
 - [ ] **Step 1: Write the failing `tests/sync-lease.test.ts`**
@@ -1112,13 +1126,16 @@ test("two claimants: second claim fails while the first holds", () => {
   }
 });
 
-test("renewal: the holder can re-claim its own unexpired lease", () => {
+test("renewal: the holder can re-claim its own unexpired lease, extending the expiry", () => {
   const { path, cleanup } = tempDbPath();
   try {
     const db = openDatabase(path);
     assert.equal(claimSyncLease(db, "owner-a", T0), true);
     assert.equal(claimSyncLease(db, "owner-a", T0 + 30_000), true);
     assert.equal(claimSyncLease(db, "owner-b", T0 + 30_000), false);
+    // The renewal at T0+30s moved the expiry to T0+90s — the original T0+60s is dead.
+    assert.equal(claimSyncLease(db, "owner-b", T0 + 70_000), false);
+    assert.equal(claimSyncLease(db, "owner-b", T0 + 90_001), true);
     db.close();
   } finally {
     cleanup();
@@ -1227,13 +1244,54 @@ test("openDatabase sets busy_timeout to 5000", () => {
 
 (Match the moved `db.test.ts`'s existing imports/fixtures for `mkdtempSync`/`rmSync`; add them if absent. If the pragma read-back does not report 5000, `node:sqlite` is not honoring it — apply the spec's fallback: wrap `Statement.run` in `db.ts` with a bounded retry on `SQLITE_BUSY` (5 attempts, 100ms backoff) and keep this test asserting whichever mechanism is in place.)
 
+Also append to `tests/sync-service.test.ts` — it uses that file's existing `setup()`/`teardown()`/`makeApi()` helpers (real temp DB + `TimeEntryStore`; `makeApi` has no `listResource`, so the duplicate scan is skipped and both entries POST):
+
+```ts
+test("syncPending calls renewLease before each entry", async () => {
+  const { dir, db, timeRepo } = setup();
+  try {
+    for (const localId of ["entry-renew-1", "entry-renew-2"]) {
+      timeRepo.insertTimeEntry({
+        localId,
+        projectId: 10,
+        worktypeId: 5,
+        date: "2026-04-24",
+        durationSeconds: 3600,
+        description: "Dev work",
+        billable: true,
+        syncStatus: "pending",
+        createdAt: "2026-04-24T10:00:00Z",
+        updatedAt: "2026-04-24T10:00:00Z",
+      });
+    }
+    const { api } = makeApi({ createResult: { id: 99 } });
+    let renewals = 0;
+    const result = await syncPending({
+      timeRepo,
+      api,
+      personId: 42,
+      renewLease: () => {
+        renewals += 1;
+      },
+    });
+    assert.equal(renewals, 2);
+    assert.equal(result.timeEntriesCreated, 2);
+    db.close();
+  } finally {
+    teardown(dir);
+  }
+});
+```
+
+(Mirror the exact `insertTimeEntry` field set the file's first test uses if it differs — the fixture above matches it minus the optional `moduleId`.)
+
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-npx tsx --test tests/sync-lease.test.ts tests/db.test.ts
+npx tsx --test tests/sync-lease.test.ts tests/db.test.ts tests/sync-service.test.ts
 ```
 
-Expected: FAIL — `sync-lease.js` missing; pragma test fails (busy_timeout defaults to 0).
+Expected: FAIL — `sync-lease.js` missing; pragma test fails (busy_timeout defaults to 0); the renewLease test fails with `renewals` at 0 (the option does not exist yet, so `syncPending` never calls it).
 
 - [ ] **Step 3: Implement**
 
@@ -1294,9 +1352,22 @@ export async function withSyncLease<T>(
 }
 ```
 
+In `src/domain/sync-service.ts` (a two-line diff to the ported file): add to `SyncPendingOptions`
+
+```ts
+  /** Called before each entry is processed; renews the sync lease during long passes. */
+  renewLease?(): void;
+```
+
+then add `renewLease` to the destructuring at the top of `syncPending` (`const { timeRepo, api, personId, limit = 20, catalog, renewLease } = options;`) and make the first line of the `for (const entry of entries)` loop body:
+
+```ts
+    renewLease?.();
+```
+
 Wire into `src/domain/runtime.ts` (this closes the `syncPending` check-then-act race — `findDuplicateRemoteTimeEntry` narrows the duplicate window but two uncoordinated callers can both check, both find nothing, and both POST; serializing **all** sync — background ticks *and* manual `sync_now`, which both flow through `trySyncNow` — through the lease closes it):
 
-1. Add imports: `import { randomUUID } from "node:crypto";` and `import { releaseSyncLease, withSyncLease } from "./sync-lease.js";`
+1. Add imports: `import { randomUUID } from "node:crypto";` and `import { claimSyncLease, releaseSyncLease, withSyncLease } from "./sync-lease.js";`
 2. Inside `createRuntime`, after `const db = openDatabase(...)`: `const syncOwner = \`${process.pid}:${randomUUID()}\`;`
 3. Replace the body of `trySyncNow`:
 
@@ -1312,6 +1383,9 @@ Wire into `src/domain/runtime.ts` (this closes the `syncPending` check-then-act 
         personId: personId!,
         limit: 50,
         catalog: catalogStore,
+        renewLease: () => {
+          claimSyncLease(db, syncOwner, Date.now());
+        },
       }),
     );
     // Lease held by another process: skip cheaply; pending rows sync on a later pass.
@@ -1336,7 +1410,7 @@ Wire into `src/domain/runtime.ts` (this closes the `syncPending` check-then-act 
 - [ ] **Step 4: Run the lease and db tests, then the full suite**
 
 ```bash
-npx tsx --test tests/sync-lease.test.ts tests/db.test.ts && npm run typecheck && npm test
+npx tsx --test tests/sync-lease.test.ts tests/db.test.ts tests/sync-service.test.ts && npm run typecheck && npm test
 ```
 
 Expected: PASS, `fail 0`.
@@ -1345,7 +1419,7 @@ Expected: PASS, `fail 0`.
 
 ```bash
 npm run build
-git add src/domain/sync-lease.ts src/domain/db.ts src/domain/runtime.ts tests/sync-lease.test.ts tests/db.test.ts dist/server.mjs
+git add src/domain/sync-lease.ts src/domain/db.ts src/domain/sync-service.ts src/domain/runtime.ts tests/sync-lease.test.ts tests/db.test.ts tests/sync-service.test.ts dist/server.mjs
 git commit -m "feat: serialize all sync through a sync_lease row; set busy_timeout=5000"
 ```
 
@@ -1354,8 +1428,8 @@ git commit -m "feat: serialize all sync through a sync_lease row; set busy_timeo
 ### Task 7: CLI — 7 commands, setup with hidden input, TTY-gated color
 
 **Files:**
-- Create: `src/cli/cli.ts`, `src/cli/main.ts`, `src/cli/prompt.ts`, `bin/intervals`, `tests/cli.test.ts`, `dist/cli.mjs` (built, committed)
-- Modify: `package.json` (add `bin`)
+- Create: `src/cli/cli.ts`, `src/cli/main.ts`, `src/cli/prompt.ts`, `tests/cli.test.ts`, `dist/cli.mjs` (built, committed, shebanged executable)
+- Modify: `package.json` (add `bin` pointing at `dist/cli.mjs`)
 
 **Interfaces:**
 - Consumes: `Runtime` (Tasks 2/6), formatters with `{ bright }` (Task 3), `withLinkedTimeEntryDuration` (Task 4).
@@ -1378,7 +1452,13 @@ export function runCli(argv: string[], runtime: Runtime, io: CliIo): Promise<num
 
 - [ ] **Step 1: Write the failing `tests/cli.test.ts`**
 
-Port `fakeRuntime(...)` **verbatim** from `$SRC/tests/commands.test.ts` (the version with `calls` counters, `lastEditPatch`, `lastTimerEditPatch`, and options `{ credentialsConfigured?, personId?, credentialSource? }`), casting to `Runtime` the same way. Replace the `fakePi`/`fakeCtx` harness with:
+Port `fakeRuntime(...)` from `$SRC/tests/commands.test.ts:42-124` as the base (the version with `calls` counters, `lastEditPatch`, `lastTimerEditPatch`, and options `{ credentialsConfigured?, personId?, credentialSource? }`), casting to `Runtime` the same way — then extend it three ways the source fake does not support (verified: it hardcodes `home: "/tmp/intervals"`, its `listActive()` returns one active timer, and its `queryTime` only increments a counter):
+
+1. options gain `home?: string` (default `"/tmp/intervals"`), returned from `status()` — case 18 needs a mkdtemp home;
+2. options gain `timers?: unknown[]` used as `timerStore.listActive()`'s return value (default: the source's single active timer) — case 5 passes `timers: []`;
+3. `timeService.queryTime` records its argument into an exposed `queryTimeArgs: unknown[]` in addition to counting — cases 10-11 assert its fields.
+
+Replace the `fakePi`/`fakeCtx` harness with:
 
 ```ts
 import assert from "node:assert/strict";
@@ -1420,13 +1500,13 @@ Test cases (each a `test(...)` calling `runCli([...args], runtime, io)` and asse
 2. `runCli(["sync-now"], ...)` with `credentialsConfigured: false` → exit 1; `err` mentions `intervals setup`.
 3. `runCli(["sync-now"], ...)` with credentials → exit 0; `out[0]` matches `/^Sync complete \| created=/`; `calls.trySyncNow === 1`.
 4. `runCli(["sync-projects"], ...)` without credentials → exit 1; with credentials → exit 0, `out[0]` matches `/^Project sync complete:/`, `calls.syncProjectsCatalog === 1`.
-5. `runCli(["timers"], ...)` with no timers → exit 0, `out[0] === "No timers found."`.
+5. `runCli(["timers"], ...)` with the fake built as `fakeRuntime({ timers: [] })` → exit 0, `out[0] === "No timers found."`.
 6. `runCli(["timers", "edit"], ...)` → exit 2, usage line on `err`.
 7. `runCli(["timers", "edit", "t1", "project_id=abc"], ...)` → exit 2, `err` mentions `Invalid numeric value for project_id`.
 8. `runCli(["timers", "edit", "t1", "project_id=5", "module_id=null"], ...)` → exit 0; `lastTimerEditPatch[0]` deep-equals `{ localId: "t1", projectId: 5, moduleId: null }`.
 9. `runCli(["timers", "delete", "t1"], ...)` → exit 0; `calls.deleteTimer === 1`.
-10. `runCli(["time"], ...)` → exit 0; queryTime called with `{ range: "today" }`.
-11. `runCli(["time", "2026-08-01..2026-08-15"], ...)` → queryTime called with `{ range: "custom", start_date: "2026-08-01", end_date: "2026-08-15" }`.
+10. `runCli(["time"], ...)` → exit 0; `queryTimeArgs[0]` has `range === "today"`.
+11. `runCli(["time", "2026-08-01..2026-08-15"], ...)` → `queryTimeArgs[0]` has `range === "custom"`, `start_date === "2026-08-01"`, `end_date === "2026-08-15"`. (Assert the fields individually — `start_date`/`end_date` are explicit `undefined` properties in case 10, so a whole-object `deepStrictEqual` against `{ range: "today" }` would fail.)
 12. `runCli(["time", "bogus"], ...)` → exit 2; `err[0]` starts `Unknown range: bogus`.
 13. `runCli(["time", "edit", "te1", "duration_minutes=90"], ...)` → exit 0; `lastEditPatch[0]` includes `durationSeconds: 5400`; output includes `Updated` and a sync summary line.
 14. `runCli(["project-defaults", "10", "5", "7"], ...)` → exit 0; `calls.setProjectDefaults === 1`; `out[0]` = `Project defaults set for 10: worktype=5 module=7`.
@@ -1908,18 +1988,12 @@ try {
 }
 ```
 
-- [ ] **Step 6: Write `bin/intervals` and register it**
+- [ ] **Step 6: Point the package bin at the bundle**
 
-```js
-#!/usr/bin/env node
-const { join } = require("node:path");
-const { pathToFileURL } = require("node:url");
-import(pathToFileURL(join(__dirname, "..", "dist", "cli.mjs")).href);
-```
+There is no shim file: an extensionless Node shim is ambiguous under `"type": "module"` (verified: on current Node it loads as ESM and `require` throws `ReferenceError`; Node 22.5–22.6 reject extensionless entry points outright with `ERR_UNKNOWN_FILE_EXTENSION`). `dist/cli.mjs` itself is the executable — unambiguous ESM on every supported Node version; `build.sh` already prepends the `#!/usr/bin/env node` shebang banner and marks it executable (Task 5 Step 2).
 
 ```bash
-chmod +x bin/intervals
-npm pkg set bin.intervals=bin/intervals
+npm pkg set bin.intervals=dist/cli.mjs
 ```
 
 - [ ] **Step 7: Run CLI tests, typecheck, build, smoke it end-to-end**
@@ -1927,15 +2001,16 @@ npm pkg set bin.intervals=bin/intervals
 ```bash
 npx tsx --test tests/cli.test.ts && npm run typecheck && npm test
 npm run build
-INTERVALS_HOME=$(mktemp -d) ./bin/intervals status
+env -u INTERVALS_API_KEY -u INTERVALS_BASE_URL -u INTERVALS_PERSON_ID \
+  INTERVALS_HOME="$(mktemp -d)" ./dist/cli.mjs status
 ```
 
-Expected: tests PASS `fail 0`; the last command prints one status line with `Credentials: none` and exits 0 (run `echo $?` to confirm).
+Expected: tests PASS `fail 0`; the last command prints one status line with `Credentials: none` and exits 0 (run `echo $?` to confirm). The `env -u` unsets matter: with `INTERVALS_API_KEY` exported in your shell, env credentials win by design and the line would read `Credentials: env`.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/cli bin/intervals tests/cli.test.ts dist/cli.mjs dist/server.mjs package.json
+git add src/cli tests/cli.test.ts dist/cli.mjs dist/server.mjs package.json
 git commit -m "feat: full CLI with setup, hidden API-key input, and TTY-gated color"
 ```
 
@@ -2000,7 +2075,7 @@ mkdir -p skills/intervals-time-entries
 sed -e 's/intervals_\([a-z_]*\)/mcp__intervals__\1/g' \
     -e 's|~/.pi/intervals/|~/.intervals/|g' \
     "$SRC/skills/intervals-time-entries/SKILL.md" > skills/intervals-time-entries/SKILL.md
-grep -c "mcp__intervals__" skills/intervals-time-entries/SKILL.md   # expected: ~30 (every former intervals_* reference)
+grep -c "mcp__intervals__" skills/intervals-time-entries/SKILL.md   # expected: 18 (matching lines; 23 total occurrences)
 grep -n "intervals_[a-z]\|\.pi/" skills/intervals-time-entries/SKILL.md ; echo "exit: $?"  # expected: no matches, exit 1
 ```
 
@@ -2049,6 +2124,7 @@ Content requirements (adapt prose from `$SRC/README.md`, which documents the beh
 6. **Agent tools:** the 14-tool table from `$SRC/README.md:94-109` with names de-prefixed (`mcp__intervals__…` as surfaced in Claude Code).
 7. **Slash commands:** the seven `/intervals-*` commands, one line each.
 8. **How it works:** port the bullet list from `$SRC/README.md:51-69` (local-only timers, local-first entries, catalog sync, local reports) unchanged in substance.
+9. **Developer note:** opening this repo itself in Claude Code shows a failed `intervals` MCP server — the repo-root `.mcp.json` is the plugin's config and `${CLAUDE_PLUGIN_ROOT}` is only set when installed as a plugin; safe to reject/ignore the prompt.
 
 - [ ] **Step 7: Manual verification (interactive Claude Code session)**
 
@@ -2094,8 +2170,14 @@ npm run typecheck
 npm test
 
 echo "gate: no pi-isms in src/"
-if grep -rn -e 'PI_INTERVALS_HOME' -e '\.pi/' -e '/intervals-' -e '@mariozechner' src/; then
+if grep -rn -e 'PI_INTERVALS_HOME' -e '\.pi/' -e '@mariozechner' src/; then
   echo "FAIL: pi-ism found in src/ (see matches above)" >&2
+  exit 1
+fi
+# /intervals- catches pi slash-command references, but must not trip on the domain
+# layer's legitimate `./intervals-api.js` import (src/domain/runtime.ts).
+if grep -rn '/intervals-' src/ | grep -v 'intervals-api'; then
+  echo "FAIL: pi slash-command reference (/intervals-*) found in src/ (see matches above)" >&2
   exit 1
 fi
 

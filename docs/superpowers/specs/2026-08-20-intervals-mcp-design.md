@@ -74,8 +74,8 @@ intervals-mcp/
 │   ├── plugin.json              # plugin "intervals"
 │   └── marketplace.json         # single-plugin marketplace
 ├── .mcp.json                    # stdio: node ${CLAUDE_PLUGIN_ROOT}/dist/server.mjs
-├── dist/                        # committed esbuild bundles: server.mjs, cli.mjs
-├── bin/intervals                # CLI shim
+├── dist/                        # committed esbuild bundles: server.mjs, cli.mjs;
+│                                #   cli.mjs is shebanged + executable (package bin)
 ├── src/
 │   ├── domain/                  # 21 files moved from pi-intervals/src
 │   ├── tools/index.ts           # 14 host-agnostic tool descriptors
@@ -218,10 +218,12 @@ things need handling:
 
    A claim succeeds only when `changes === 1`. The lease is claimed per sync pass and
    released in a `finally` when the pass ends, with an owner-guarded release on shutdown
-   as a backstop; the `owner = ?` clause lets a holder re-claim (renew) its own lease.
-   TTL is 60s, which covers holders that crash mid-pass. A long-held per-process lease
-   would not work: the default 10-minute tick cannot sustain a 60s TTL, and it would
-   block another session's manual `sync_now` for minutes.
+   as a backstop. The `owner = ?` clause lets a holder re-claim (renew) its own lease,
+   and `syncPending` renews before each entry via an optional `renewLease` hook, so a
+   pass slower than the TTL keeps the lease. TTL is 60s, which covers holders that crash
+   mid-pass. A long-held per-process lease would not work: the default 10-minute tick
+   cannot sustain a 60s TTL, and it would block another session's manual `sync_now` for
+   minutes.
 
 3. **`withSyncLease()` wraps every sync path** — background ticks *and* manual `sync_now`.
    This is the part that matters. `syncPending` reads `pendingForSync(limit)` and then
@@ -256,11 +258,13 @@ pre-move locations in that repo; after the move these files live under `src/doma
   `tests/config.test.ts`)
 
 `npm run check` greps `src/` for `PI_INTERVALS_HOME`, `.pi/`, `/intervals-`, and
-`@mariozechner`, failing on any hit, so pi-isms cannot creep back in.
+`@mariozechner`, failing on any hit, so pi-isms cannot creep back in. The `/intervals-`
+gate excludes the `intervals-api` module name, which the domain layer legitimately
+imports (`runtime.ts` imports `./intervals-api.js`).
 
 ## Testing
 
-- The 22 domain test files move with import-path and environment-variable renames. Green
+- The 18 domain test files move with import-path and environment-variable renames. Green
   tests are the proof the move was faithful — this is the regression net for the port.
 - `tools.test.ts` is rewritten against the descriptor list; the fake-pi harness is deleted.
 - `commands.test.ts` becomes CLI tests.
