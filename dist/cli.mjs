@@ -669,7 +669,7 @@ async function syncPending(options) {
   let timeEntriesUpdated = 0;
   let failed = 0;
   for (const entry of entries) {
-    renewLease?.();
+    if (renewLease?.() === false) break;
     if (personId == null) {
       timeRepo.markSyncFailed(entry.localId, "Missing personId: set INTERVALS_PERSON_ID or run `intervals setup` to configure your Intervals person ID.");
       failed++;
@@ -1644,9 +1644,7 @@ function createRuntime(options = {}) {
         personId,
         limit: 50,
         catalog: catalogStore,
-        renewLease: () => {
-          claimSyncLease(db, syncOwner, Date.now());
-        }
+        renewLease: () => claimSyncLease(db, syncOwner, Date.now())
       })
     );
     return result ?? { timeEntriesCreated: 0, timeEntriesUpdated: 0, failed: 0 };

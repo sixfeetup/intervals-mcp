@@ -20,8 +20,12 @@ export interface SyncPendingOptions {
    * instead of relying on Intervals' generic "could not be found" response.
    */
   catalog?: CatalogStore;
-  /** Called before each entry is processed; renews the sync lease during long passes. */
-  renewLease?(): void;
+  /**
+   * Called before each entry is processed; renews the sync lease during long passes.
+   * Returns whether the lease is still held (or void to keep going, e.g. in tests
+   * that don't track lease state). A pass aborts only when this returns false.
+   */
+  renewLease?(): boolean | void;
 }
 
 export interface SyncPendingResult {
@@ -39,7 +43,7 @@ export async function syncPending(options: SyncPendingOptions): Promise<SyncPend
   let failed = 0;
 
   for (const entry of entries) {
-    renewLease?.();
+    if (renewLease?.() === false) break;
     if (personId == null) {
       timeRepo.markSyncFailed(entry.localId, "Missing personId: set INTERVALS_PERSON_ID or run `intervals setup` to configure your Intervals person ID.");
       failed++;

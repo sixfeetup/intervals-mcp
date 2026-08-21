@@ -654,3 +654,41 @@ test("syncPending calls renewLease before each entry", async () => {
     teardown(dir);
   }
 });
+
+test("syncPending aborts the pass when renewLease returns false", async () => {
+  const { dir, db, timeRepo } = setup();
+  try {
+    for (const localId of ["entry-abort-1", "entry-abort-2"]) {
+      timeRepo.insertTimeEntry({
+        localId,
+        projectId: 10,
+        worktypeId: 5,
+        date: "2026-04-24",
+        durationSeconds: 3600,
+        description: "Dev work",
+        billable: true,
+        syncStatus: "pending",
+        createdAt: "2026-04-24T10:00:00Z",
+        updatedAt: "2026-04-24T10:00:00Z",
+      });
+    }
+    const { api } = makeApi({ createResult: { id: 99 } });
+    let calls = 0;
+    const result = await syncPending({
+      timeRepo,
+      api,
+      personId: 42,
+      renewLease: () => {
+        calls += 1;
+        return calls === 1;
+      },
+    });
+    assert.equal(result.timeEntriesCreated, 1);
+
+    const secondEntry = timeRepo.getTimeEntry("entry-abort-2")!;
+    assert.equal(secondEntry.syncStatus, "pending");
+  } finally {
+    db.close();
+    teardown(dir);
+  }
+});

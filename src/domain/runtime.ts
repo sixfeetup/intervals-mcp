@@ -93,9 +93,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
         personId: personId!,
         limit: 50,
         catalog: catalogStore,
-        renewLease: () => {
-          claimSyncLease(db, syncOwner, Date.now());
-        },
+        renewLease: () => claimSyncLease(db, syncOwner, Date.now()),
       }),
     );
     // Lease held by another process: skip cheaply; pending rows sync on a later pass.
