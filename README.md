@@ -8,12 +8,7 @@ Reports and queries are always local-only and never call the Intervals API.
 ## Install (Claude Code plugin)
 
 ```
-/plugin marketplace add /path/to/intervals-mcp
-```
-
-(or, once pushed to GitHub, `/plugin marketplace add sixfeetup/intervals-mcp`)
-
-```
+/plugin marketplace add sixfeetup/intervals-mcp
 /plugin install intervals@intervals-mcp
 ```
 
@@ -22,7 +17,11 @@ The only requirement is Node >= 22.5.
 
 ## Install (any MCP host)
 
-Point your MCP host at the bundled server:
+Clone the repo and point your MCP host at the bundled server:
+
+```bash
+git clone https://github.com/sixfeetup/intervals-mcp.git
+```
 
 ```json
 {
