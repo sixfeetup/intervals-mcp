@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  formatBrightTimerRows,
-  formatBrightTimerRowsByDate,
   formatDuration,
   formatTimer,
   formatTimerRows,
+  formatTimerRowsByDate,
   formatTimeEntry,
   formatTimeReport,
   formatSyncSummary,
@@ -95,7 +94,7 @@ test("formatTimerRows aligns status, window, duration, and id columns", () => {
 
 test("formatBrightTimerRows keeps visible timer columns aligned", () => {
   const activeStart = new Date(2026, 6, 1, 9, 0).toISOString();
-  const rows = formatBrightTimerRows([
+  const rows = formatTimerRows([
     {
       localId: "f52d5ed6",
       description: "Sixie standup",
@@ -118,14 +117,14 @@ test("formatBrightTimerRows keeps visible timer columns aligned", () => {
       createdAt: new Date(2026, 6, 1, 9, 29).toISOString(),
       updatedAt: new Date(2026, 6, 1, 17, 33).toISOString(),
     },
-  ], new Date(2026, 6, 1, 9, 29)).map(stripAnsi);
+  ], new Date(2026, 6, 1, 9, 29), { bright: true }).map(stripAnsi);
 
   assert.equal(rows[0].indexOf("09:00"), rows[1].indexOf("09:29"));
   assert.equal(rows[0].indexOf("f52d5ed6"), rows[1].indexOf("813963d3"));
 });
 
 test("formatBrightTimerRowsByDate groups timers under dated totals", () => {
-  const rows = formatBrightTimerRowsByDate([
+  const rows = formatTimerRowsByDate([
     {
       localId: "f3548369",
       description: "Meet with Jason Weaver",
@@ -168,7 +167,7 @@ test("formatBrightTimerRowsByDate groups timers under dated totals", () => {
       createdAt: new Date(2026, 6, 2, 9, 28).toISOString(),
       updatedAt: new Date(2026, 6, 2, 16, 30).toISOString(),
     },
-  ]).map(stripAnsi);
+  ], undefined, { bright: true }).map(stripAnsi);
 
   assert.deepEqual(rows, [
     "Fri 2026-07-03 · 7h 36m",
@@ -396,4 +395,44 @@ test("formatSyncSummary renders compact counts", () => {
     failed: 2,
   };
   assert.equal(formatSyncSummary(summary), "created=3 updated=1 failed=2");
+});
+
+test("plain formatters emit no ANSI escape codes", () => {
+  const report = {
+    startDate: "2026-08-20",
+    endDate: "2026-08-20",
+    totalSeconds: 3600,
+    entries: [
+      {
+        localId: "te-plain-1",
+        projectId: 1,
+        worktypeId: 2,
+        date: "2026-08-20",
+        durationSeconds: 3600,
+        description: "plain check",
+        billable: true,
+        syncStatus: "synced" as const,
+        syncAttempts: 0,
+        createdAt: "2026-08-20T10:00:00Z",
+        updatedAt: "2026-08-20T10:00:00Z",
+        projectName: "Proj",
+        worktypeName: "Consulting",
+      },
+    ],
+    byProject: [{ projectId: 1, projectName: "Proj", totalSeconds: 3600 }],
+  };
+  assert.doesNotMatch(formatTimeReport(report as never, { label: "today" }), /\u001b/);
+  assert.doesNotMatch(
+    formatTimerRows([
+      { localId: "t-plain-1", description: "x", startedAt: "2026-08-20T10:00:00Z", elapsedSeconds: 60, state: "stopped", stoppedAt: "2026-08-20T10:01:00Z", createdAt: "2026-08-20T10:00:00Z", updatedAt: "2026-08-20T10:01:00Z" } as never,
+    ]).join("\n"),
+    /\u001b/,
+  );
+});
+
+test("bright option emits ANSI escape codes", () => {
+  const rows = formatTimerRows([
+    { localId: "t-bright-1", description: "x", startedAt: "2026-08-20T10:00:00Z", elapsedSeconds: 60, state: "active", createdAt: "2026-08-20T10:00:00Z", updatedAt: "2026-08-20T10:00:00Z" } as never,
+  ], new Date("2026-08-20T10:01:00Z"), { bright: true });
+  assert.match(rows.join("\n"), /\u001b\[/);
 });

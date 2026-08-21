@@ -14,7 +14,7 @@ export function formatDuration(totalSeconds: number): string {
   return parts.join(" ");
 }
 
-type DisplayTimer = Timer & {
+export type DisplayTimer = Timer & {
   displayElapsedSeconds?: number;
   displayDate?: string;
   displayStartAt?: string;
@@ -30,12 +30,16 @@ interface TimerRowParts {
   description: string;
 }
 
-export function formatTimer(timer: DisplayTimer, now = new Date()): string {
-  return formatTimerRows([timer], now)[0] ?? "";
+export interface FormatBrightOption {
+  bright?: boolean;
 }
 
-export function formatTimerRows(timers: DisplayTimer[], now = new Date()): string[] {
-  return formatTimerRowsInternal(timers, now, false);
+export function formatTimer(timer: DisplayTimer, now = new Date(), options: FormatBrightOption = {}): string {
+  return formatTimerRows([timer], now, options)[0] ?? "";
+}
+
+export function formatTimerRows(timers: DisplayTimer[], now = new Date(), options: FormatBrightOption = {}): string[] {
+  return formatTimerRowsInternal(timers, now, options.bright === true);
 }
 
 const ANSI_RESET = "\u001b[0m";
@@ -45,21 +49,33 @@ const ANSI_BRIGHT_CYAN = "\u001b[96m";
 const ANSI_BRIGHT_RED = "\u001b[91m";
 const ANSI_DIM = "\u001b[2m";
 
-export function formatBrightTimer(timer: DisplayTimer, now = new Date()): string {
-  return formatBrightTimerRows([timer], now)[0] ?? "";
+export function formatTimerRowsByDate(timers: DisplayTimer[], now = new Date(), options: FormatBrightOption = {}): string[] {
+  return formatTimerRowsByDateInternal(timers, now, options.bright === true);
 }
 
-export function formatBrightTimerRows(timers: DisplayTimer[], now = new Date()): string[] {
-  return formatTimerRowsInternal(timers, now, true);
+interface Style {
+  cyan(text: string): string;
+  yellow(text: string): string;
+  green(text: string): string;
+  red(text: string): string;
+  dim(text: string): string;
 }
 
-export function formatTimerRowsByDate(timers: DisplayTimer[], now = new Date()): string[] {
-  return formatTimerRowsByDateInternal(timers, now, false);
-}
+const PLAIN_STYLE: Style = {
+  cyan: (text) => text,
+  yellow: (text) => text,
+  green: (text) => text,
+  red: (text) => text,
+  dim: (text) => text,
+};
 
-export function formatBrightTimerRowsByDate(timers: DisplayTimer[], now = new Date()): string[] {
-  return formatTimerRowsByDateInternal(timers, now, true);
-}
+const BRIGHT_STYLE: Style = {
+  cyan: (text) => `${ANSI_BRIGHT_CYAN}${text}${ANSI_RESET}`,
+  yellow: (text) => `${ANSI_BRIGHT_YELLOW}${text}${ANSI_RESET}`,
+  green: (text) => `${ANSI_BRIGHT_GREEN}${text}${ANSI_RESET}`,
+  red: (text) => `${ANSI_BRIGHT_RED}${text}${ANSI_RESET}`,
+  dim: (text) => `${ANSI_DIM}${text}${ANSI_RESET}`,
+};
 
 function formatTimerRowsInternal(timers: DisplayTimer[], now: Date, bright: boolean): string[] {
   const parts = timers.map((timer) => getTimerRowParts(timer, now));
@@ -174,12 +190,13 @@ export function formatTimeEntry(
   return line;
 }
 
-export function formatTimeReport(report: TimeReport, options: { label?: string } = {}): string {
+export function formatTimeReport(report: TimeReport, options: { label?: string; bright?: boolean } = {}): string {
+  const style = options.bright === true ? BRIGHT_STYLE : PLAIN_STYLE;
   const singleDay = report.startDate === report.endDate;
   const period = singleDay ? report.startDate : `${report.startDate} .. ${report.endDate}`;
   const label = options.label ? `${options.label}  ` : "";
   const lines: string[] = [
-    `${ANSI_BRIGHT_CYAN}${label}${period}${ANSI_RESET}  ${ANSI_BRIGHT_YELLOW}Total: ${formatDuration(report.totalSeconds)}${ANSI_RESET} ${ANSI_DIM}· ${report.entries.length} ${pluralize(report.entries.length, "entry", "entries")} · ${report.byProject.length} ${pluralize(report.byProject.length, "project", "projects")}${ANSI_RESET}`,
+    `${style.cyan(`${label}${period}`)}  ${style.yellow(`Total: ${formatDuration(report.totalSeconds)}`)} ${style.dim(`· ${report.entries.length} ${pluralize(report.entries.length, "entry", "entries")} · ${report.byProject.length} ${pluralize(report.byProject.length, "project", "projects")}`)}`,
   ];
 
   for (const group of [...report.byProject].sort((a, b) => b.totalSeconds - a.totalSeconds)) {
@@ -188,15 +205,15 @@ export function formatTimeReport(report: TimeReport, options: { label?: string }
       .sort(compareTimeReportEntries);
 
     lines.push("");
-    lines.push(`${ANSI_BRIGHT_GREEN}● ${group.projectName}${ANSI_RESET}  ${ANSI_BRIGHT_YELLOW}${formatDuration(group.totalSeconds)}${ANSI_RESET}`);
+    lines.push(`${style.green(`● ${group.projectName}`)}  ${style.yellow(formatDuration(group.totalSeconds))}`);
 
     const classification = formatSharedClassification(entries);
     if (classification) {
-      lines.push(`  ${ANSI_DIM}${classification}${ANSI_RESET}`);
+      lines.push(`  ${style.dim(classification)}`);
     }
 
     for (const entry of entries) {
-      lines.push(formatTimeReportEntryRow(entry, { includeDate: !singleDay }));
+      lines.push(formatTimeReportEntryRow(entry, style, { includeDate: !singleDay }));
     }
   }
 
@@ -217,7 +234,7 @@ function formatSharedClassification(entries: TimeReport["entries"]): string {
   return [...labels][0];
 }
 
-function formatTimeReportEntryRow(entry: TimeReport["entries"][number], options: { includeDate: boolean }): string {
+function formatTimeReportEntryRow(entry: TimeReport["entries"][number], style: Style, options: { includeDate: boolean }): string {
   const id = formatEditableLocalId(entry.localId);
   const date = options.includeDate ? `${entry.date} ` : "";
   const window = formatTimeEntryWindow(entry);
@@ -225,14 +242,14 @@ function formatTimeReportEntryRow(entry: TimeReport["entries"][number], options:
   const description = entry.description || "(no description)";
   const failedError = entry.syncStatus === "failed" && entry.lastSyncError ? ` (${entry.lastSyncError})` : "";
 
-  return `  ${ANSI_BRIGHT_CYAN}${id}${ANSI_RESET}  ${ANSI_DIM}${date}${windowPart}${ANSI_RESET}${ANSI_BRIGHT_YELLOW}${formatDuration(entry.durationSeconds)}${ANSI_RESET} ${formatSyncStatusSymbol(entry.syncStatus)} ${description}${failedError}`;
+  return `  ${style.cyan(id)}  ${style.dim(`${date}${windowPart}`)}${style.yellow(formatDuration(entry.durationSeconds))} ${formatSyncStatusSymbol(entry.syncStatus, style)} ${description}${failedError}`;
 }
 
-function formatSyncStatusSymbol(status: TimeEntry["syncStatus"]): string {
-  if (status === "synced") return `${ANSI_BRIGHT_GREEN}✓${ANSI_RESET}`;
-  if (status === "pending") return `${ANSI_BRIGHT_YELLOW}●${ANSI_RESET}`;
-  if (status === "failed") return `${ANSI_BRIGHT_RED}✕${ANSI_RESET}`;
-  return `${ANSI_BRIGHT_YELLOW}!${ANSI_RESET}`;
+function formatSyncStatusSymbol(status: TimeEntry["syncStatus"], style: Style): string {
+  if (status === "synced") return style.green("✓");
+  if (status === "pending") return style.yellow("●");
+  if (status === "failed") return style.red("✕");
+  return style.yellow("!");
 }
 
 function pluralize(count: number, singular: string, plural: string): string {
