@@ -1,7 +1,8 @@
 # intervals-mcp Design
 
 Date: 2026-08-20
-Status: Approved
+Status: Approved (amended 2026-08-21 with corrections found while writing the
+implementation plan; see that plan's Findings section)
 
 ## Goal
 
@@ -34,9 +35,11 @@ design changes it.
 
 - Its `src/` holds 26 files. 21 are the pi-free domain layer listed under Architecture.
   `index.ts`, `tools.ts`, and `commands.ts` are the pi adapters being replaced;
-  `quiet-tool-rendering.ts` is dropped.
-- Its `tests/` holds 24 files; the 22 that are not `tools.test.ts` or `commands.test.ts`
-  move across.
+  `quiet-tool-rendering.ts` and `command-args.ts` are dropped (the latter split pi's raw
+  command strings into tokens — the CLI receives argv already tokenized by the shell).
+- Its `tests/` holds 21 files; the 18 that are not `tools.test.ts`, `commands.test.ts`,
+  or `smoke.test.ts` move across. `smoke.test.ts` only asserts the pi entry point exports
+  a function; the MCP protocol smoke test supersedes it.
 - Its `README.md` documents the tool and command behaviour this server must preserve.
 - `docs/designs/2026-04-24-pi-intervals.md` records the original local-first data model.
 
@@ -94,8 +97,10 @@ zero pi imports outside the three adapter files:
 `runtime`, `start-at`, `sync-service`, `time-edit-feedback`, `time-entry-store`,
 `timer-service`, `timer-store`, `time-service`, `time-window`, `types`.
 
-`command-args.ts` moves to `src/cli/` (argv parsing). `quiet-tool-rendering.ts` is dropped
-— it implements pi's TUI renderer shape, which has no MCP equivalent.
+`command-args.ts` is dropped — `splitCommandArgs` existed only to tokenize pi's raw
+command strings, and the CLI receives argv already tokenized by the shell.
+`quiet-tool-rendering.ts` is dropped — it implements pi's TUI renderer shape, which has
+no MCP equivalent.
 
 ### Layer 2 — tool descriptors
 
@@ -159,8 +164,10 @@ invalid worktype ID) become `isError: true` with the message as text, not JSON-R
 errors, so the model can read the message and correct itself — this is what keeps the
 "invalid worktype_id -> retry with the right ID" loop working.
 
-MCP output uses the plain formatters. The ANSI `formatBright*` formatters move to the CLI
-and are stripped when stdout is not a TTY.
+MCP output must be ANSI-free, and today's "plain" formatters are not: `formatTimeReport`
+— which `query_time` renders — embeds ANSI codes directly. The port therefore makes every
+formatter plain by default with an opt-in `{ bright: true }` option and deletes the
+`formatBright*` exports; the CLI passes `bright` only when stdout is a TTY.
 
 ## CLI surface
 
@@ -209,8 +216,12 @@ things need handling:
     WHERE id = 1 AND (expires_at < ? OR owner = ?)
    ```
 
-   A claim succeeds only when `changes === 1`. TTL is 60s, renewed on each tick, released
-   on shutdown; expiry covers crashed holders.
+   A claim succeeds only when `changes === 1`. The lease is claimed per sync pass and
+   released in a `finally` when the pass ends, with an owner-guarded release on shutdown
+   as a backstop; the `owner = ?` clause lets a holder re-claim (renew) its own lease.
+   TTL is 60s, which covers holders that crash mid-pass. A long-held per-process lease
+   would not work: the default 10-minute tick cannot sustain a 60s TTL, and it would
+   block another session's manual `sync_now` for minutes.
 
 3. **`withSyncLease()` wraps every sync path** — background ticks *and* manual `sync_now`.
    This is the part that matters. `syncPending` reads `pendingForSync(limit)` and then
@@ -220,7 +231,8 @@ things need handling:
    because a manual sync can still collide with a background one. Serializing all sync
    through the lease does.
 
-Non-holders skip their background tick cheaply.
+Non-holders skip cheaply: a background tick or manual `sync_now` that fails the claim
+returns zero counts, and pending rows sync on a later pass.
 
 ## stdio hygiene
 
@@ -240,7 +252,8 @@ pre-move locations in that repo; after the move these files live under `src/doma
 - `sync-service.ts:41` — the "run `/intervals-setup`" message points at `intervals setup`
 - `tools.ts` — the two `StringEnum` calls become TypeBox unions, dropping
   `@mariozechner/pi-ai`
-- ~14 `PI_INTERVALS_HOME` call sites in `tests/runtime.test.ts` and `tests/config.test.ts`
+- 14 `PI_INTERVALS_HOME` call sites (12 in `tests/runtime.test.ts`, 2 in
+  `tests/config.test.ts`)
 
 `npm run check` greps `src/` for `PI_INTERVALS_HOME`, `.pi/`, `/intervals-`, and
 `@mariozechner`, failing on any hit, so pi-isms cannot creep back in.
@@ -270,6 +283,12 @@ Each has a decided fallback, so none blocks progress:
    revision. If unavailable, drop `details` and treat the text output as authoritative.
 3. **`PRAGMA busy_timeout` under `node:sqlite`** via `db.exec`. If it is not honored, wrap
    writes in a bounded retry on `SQLITE_BUSY`.
+4. **`mcp__intervals__*` tool naming** for plugin-provided MCP servers. If Claude Code
+   prefixes plugin server tools differently, update the skill's tool names to the
+   observed reality.
+5. **`` !`command` `` injection and `$ARGUMENTS`** work inside plugin `skills/*/SKILL.md`
+   files. If not, the seven slash commands move to `commands/*.md` files, which support
+   both.
 
 ## Order of work
 
@@ -283,8 +302,9 @@ Each has a decided fallback, so none blocks progress:
 
 ## Next step
 
-No implementation plan exists yet. The next action is to write one from this spec into
-`docs/superpowers/plans/YYYY-MM-DD-intervals-mcp.md`, following the Order of work above.
+The implementation plan is written: `docs/superpowers/plans/2026-08-21-intervals-mcp.md`,
+nine tasks following the Order of work above. The next action is to execute it task by
+task.
 
-This repo currently contains nothing but this spec — no `package.json`, no `src/`, no git
-remote.
+This repo currently contains only this spec and that plan — no `package.json`, no `src/`,
+no git remote.
